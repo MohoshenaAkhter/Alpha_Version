@@ -1,3 +1,6 @@
+# Project-wide settings. The API key comes from an env variable so it's
+# never committed to git.
+
 import os
 
 # Model used for generating cinematic scenes

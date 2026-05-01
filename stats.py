@@ -1,27 +1,16 @@
-"""Statistics and visualization for saved scenes."""
+# Bar chart of how often each emotion has been generated.
 
 import matplotlib.pyplot as plt
 from data_handler import load_scenes
 
 
-def get_emotion_counts():
-    """Return how many times each emotion appears in saved scenes.
-
-    Returns:
-        pd.Series: Emotion counts sorted by frequency.
-    """
+def show_emotion_chart():
     df = load_scenes()
     if df.empty or "emotion" not in df.columns:
-        return None
-    return df["emotion"].value_counts()
-
-
-def show_emotion_chart():
-    """Open a bar chart showing the user's emotion history."""
-    counts = get_emotion_counts()
-    if counts is None:
         print("No scenes saved yet.")
         return
+
+    counts = df["emotion"].value_counts()
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.bar(counts.index, counts.values, color="#e94560", edgecolor="#1a1a2e")
