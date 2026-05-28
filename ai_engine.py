@@ -1,15 +1,11 @@
-# Calls the Groq API with the user's text and returns a dict containing
-# emotion, scene, camera_style, lighting, a list of 3 hex colors, and an
-# image_prompt suitable for feeding into an image-generation model.
+# Sends the user's text to Groq and returns a dict containing emotion,
+# scene, camera_style, lighting, a list of 3 hex colors and an image_prompt.
 
 import json
 from groq import Groq
 from config import GROQ_API_KEY, GROQ_MODEL
 
-# Very short inputs ("ok", "fine", "idk") don't carry enough emotional signal
-# on their own. When we detect one of these, we add a hint to the prompt so
-# the model invents an evocative scene around the implied mood instead of
-# producing something generic.
+# Inputs with this many words or fewer get a special prompt branch.
 SHORT_INPUT_WORD_LIMIT = 2
 
 SYSTEM_PROMPT = (
@@ -23,7 +19,6 @@ SYSTEM_PROMPT = (
 
 
 def _build_user_prompt(text):
-    """Build the user-side message, with an extra nudge for very short inputs."""
     is_short = len(text.split()) <= SHORT_INPUT_WORD_LIMIT
 
     instructions = (
@@ -44,6 +39,8 @@ def _build_user_prompt(text):
     )
 
     if is_short:
+        # Short inputs ("ok", "fine") don't carry enough signal — push the
+        # model to invent rather than fall back to something generic.
         instructions += (
             "The input is very short and ambiguous. Interpret it generously: "
             "imagine the kind of moment a person who would type this short "
@@ -60,7 +57,6 @@ def get_emotion_and_scene(text):
         raise ValueError("GROQ_API_KEY is not set. Add it to your environment variables.")
 
     client = Groq(api_key=GROQ_API_KEY)
-
     user_prompt = _build_user_prompt(text)
 
     response = client.chat.completions.create(
@@ -75,7 +71,7 @@ def get_emotion_and_scene(text):
 
     raw = response.choices[0].message.content.strip()
 
-    # The model sometimes wraps the JSON in ```json ... ``` fences, strip them.
+    # Strip ```json ... ``` fences if the model wraps the response.
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

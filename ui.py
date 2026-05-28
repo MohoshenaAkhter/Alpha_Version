@@ -1,14 +1,17 @@
-# Tkinter UI for the cinematic scene engine. The API call runs in a
-# background thread so the window stays responsive while waiting.
+# Tkinter UI for the cinematic scene engine. Both the Groq call and the
+# image fetch run on background threads so the window stays responsive.
 
 import json
+import os
 import threading
 import tkinter as tk
 
 import groq
+from PIL import Image, ImageTk
 
 from ai_engine import get_emotion_and_scene
 from data_handler import save_scene, load_scenes
+from image_engine import build_image_prompt, generate_image, ImageGenerationError
 from stats import show_emotion_chart
 
 # Theme colors used across the window.
@@ -17,9 +20,17 @@ BG_MID = "#16213e"
 ACCENT = "#e94560"
 FG_MAIN = "#e0e0e0"
 
-# The most recently generated scene, kept so Save can write it to CSV.
+# In-window preview size; click-to-enlarge opens the original separately.
+THUMB_WIDTH = 420
+THUMB_HEIGHT = 280
+
+# The most recently generated scene, kept so Save knows what to write.
 last_input = None
 last_result = None
+last_image_path = None
+
+# PhotoImage gets GC'd if nothing holds a reference; keep one alive here.
+thumbnail_photo = None
 
 
 def set_output(text):
@@ -30,7 +41,6 @@ def set_output(text):
 
 
 def darken(hex_color):
-    # Used to give buttons a subtle hover effect.
     hex_color = hex_color.lstrip("#")
     r, g, b = (int(hex_color[i:i+2], 16) for i in (0, 2, 4))
     r, g, b = max(0, r - 25), max(0, g - 25), max(0, b - 25)
@@ -38,8 +48,6 @@ def darken(hex_color):
 
 
 def make_btn(parent, text, command, bg, fg, font, padx=20, pady=8):
-    # tk.Button ignores bg/fg colors on macOS, so a Label with click bindings
-    # is used instead to keep the look consistent across platforms.
     btn = tk.Label(parent, text=text, bg=bg, fg=fg, font=font,
                    padx=padx, pady=pady, cursor="hand2")
     btn.bind("<Button-1>", lambda e: command())
@@ -48,10 +56,50 @@ def make_btn(parent, text, command, bg, fg, font, padx=20, pady=8):
     return btn
 
 
+def reset_image_area(message="No image yet."):
+    global thumbnail_photo
+    thumbnail_photo = None
+    image_panel.config(image="", text=message, cursor="")
+    image_panel.image = None
+
+
+def show_thumbnail(path):
+    global thumbnail_photo
+    try:
+        img = Image.open(path)
+    except (OSError, FileNotFoundError) as exc:
+        reset_image_area(f"Could not open image:\n{exc}")
+        return
+
+    img.thumbnail((THUMB_WIDTH, THUMB_HEIGHT))
+    thumbnail_photo = ImageTk.PhotoImage(img)
+    image_panel.config(image=thumbnail_photo, text="", cursor="hand2")
+    image_panel.image = thumbnail_photo
+
+
+def open_image_fullsize(_event=None):
+    if not last_image_path or not os.path.exists(last_image_path):
+        return
+
+    top = tk.Toplevel(root)
+    top.title("Scene Image")
+    top.configure(bg=BG_DARK)
+
+    img = Image.open(last_image_path)
+    img.thumbnail((1100, 800))
+    photo = ImageTk.PhotoImage(img)
+    label = tk.Label(top, image=photo, bg=BG_DARK)
+    label.image = photo
+    label.pack(padx=20, pady=20)
+
+    top.bind("<Escape>", lambda e: top.destroy())
+
+
 def show_result(user_input, result):
-    global last_input, last_result
+    global last_input, last_result, last_image_path
     last_input = user_input
     last_result = result
+    last_image_path = None
 
     emotion = result.get("emotion", "")
     scene = result.get("scene", "")
@@ -67,7 +115,6 @@ def show_result(user_input, result):
     )
     set_output(output_text)
 
-    # Fill the three swatch canvases with the returned hex colors.
     for i, canvas in enumerate(color_swatches):
         color = colors[i] if i < len(colors) else BG_MID
         canvas.config(bg=color)
@@ -77,11 +124,36 @@ def show_result(user_input, result):
     save_btn.pack(side="left", padx=5)
     status_label.config(text="", fg="#52b788")
 
+    # Kick image generation off in its own thread so the scene is visible
+    # immediately and the user isn't staring at a blank panel.
+    reset_image_area("Generating image…")
+    threading.Thread(target=fetch_image, args=(result,), daemon=True).start()
+
+
+def fetch_image(result):
+    try:
+        prompt = build_image_prompt(result)
+        path = generate_image(prompt)
+    except ImageGenerationError as exc:
+        msg = str(exc)
+        root.after(0, lambda: reset_image_area(f"Image unavailable:\n{msg}"))
+        return
+    except Exception as exc:
+        msg = str(exc)
+        root.after(0, lambda: reset_image_area(f"Image unavailable:\n{msg}"))
+        return
+
+    def display():
+        global last_image_path
+        last_image_path = path
+        show_thumbnail(path)
+
+    root.after(0, display)
+
 
 def call_api(user_input):
-    # Runs in a background thread. Errors are classified so the user gets
-    # a more useful message than a raw stack trace. Results are pushed back
-    # to the main thread via root.after, which is the safe way to update Tk.
+    # Background thread. Errors are classified so the user gets an
+    # actionable message instead of a stack trace.
     try:
         result = get_emotion_and_scene(user_input)
         root.after(0, lambda: show_result(user_input, result))
@@ -116,6 +188,7 @@ def generate_scene():
     save_btn.pack_forget()
     status_label.config(text="")
     set_output("Analyzing your emotion...")
+    reset_image_area("No image yet.")
 
     threading.Thread(target=call_api, args=(user_input,), daemon=True).start()
 
@@ -123,14 +196,12 @@ def generate_scene():
 def save_current_scene():
     if last_result is None:
         return
-    save_scene(last_input, last_result)
+    save_scene(last_input, last_result, image_path=last_image_path)
     status_label.config(text="✓ Scene saved!", fg="#52b788")
     save_btn.config(fg="#888888")
 
 
 def view_history():
-    # Check first whether there is any saved data, so we can give visible
-    # feedback in the window itself rather than only in the terminal.
     df = load_scenes()
     if df.empty or "emotion" not in df.columns:
         status_label.config(text="No scenes saved yet — generate and save one first.",
@@ -141,16 +212,16 @@ def view_history():
 
 
 def run():
-    # Build the window and start the Tk main loop. Wrapping this in a
-    # function keeps import-time side effects out of ui.py, so the module
-    # can be imported (e.g. for testing) without launching the UI.
+    # Wrapping the window build in a function keeps import-time side effects
+    # out of ui.py, so the module can be imported without launching the UI.
     global root, input_box, output_box
     global generate_btn, save_btn, status_label
     global color_swatches, swatch_labels
+    global image_panel
 
     root = tk.Tk()
     root.title("Emotion-Driven Cinematic Scene Engine")
-    root.geometry("780x820")
+    root.geometry("820x1080")
     root.configure(bg=BG_DARK)
 
     tk.Label(root, text="🎬 Cinematic Scene Engine",
@@ -164,7 +235,7 @@ def run():
     tk.Label(root, text="How are you feeling?",
              bg=BG_DARK, fg="white", font=("Georgia", 13)).pack(pady=(10, 5))
 
-    input_box = tk.Text(root, height=5, width=65,
+    input_box = tk.Text(root, height=4, width=65,
                         font=("Courier", 11), bg=BG_MID, fg="white",
                         insertbackground="white", relief="flat", padx=10, pady=10)
     input_box.pack(pady=5)
@@ -174,22 +245,22 @@ def run():
                             bg=ACCENT, fg="white",
                             font=("Georgia", 12, "bold"),
                             padx=20, pady=8)
-    generate_btn.pack(pady=15)
+    generate_btn.pack(pady=12)
 
     tk.Label(root, text="Your Cinematic Scene:",
              bg=BG_DARK, fg="white", font=("Georgia", 13)).pack(pady=(5, 5))
 
-    output_box = tk.Text(root, height=12, width=65,
+    output_box = tk.Text(root, height=9, width=65,
                          font=("Courier", 11), bg=BG_MID, fg=FG_MAIN,
                          relief="flat", padx=10, pady=10,
                          state="disabled", wrap="word")
     output_box.pack(pady=5)
 
     tk.Label(root, text="Color Palette:",
-             bg=BG_DARK, fg="white", font=("Georgia", 12)).pack(anchor="w", padx=60, pady=(10, 5))
+             bg=BG_DARK, fg="white", font=("Georgia", 12)).pack(anchor="w", padx=60, pady=(8, 5))
 
     swatch_frame = tk.Frame(root, bg=BG_DARK)
-    swatch_frame.pack(anchor="w", padx=60, pady=(0, 10))
+    swatch_frame.pack(anchor="w", padx=60, pady=(0, 8))
 
     color_swatches = []
     swatch_labels = []
@@ -209,9 +280,20 @@ def run():
         color_swatches.append(canvas)
         swatch_labels.append(label)
 
-    # Save and history buttons sit side by side under the swatches.
+    tk.Label(root, text="Scene Image (click to enlarge):",
+             bg=BG_DARK, fg="white", font=("Georgia", 12)).pack(pady=(8, 5))
+
+    # The image panel doubles as a status display — when there's no image,
+    # it shows a text message instead of a picture.
+    image_panel = tk.Label(root, text="No image yet.",
+                           width=THUMB_WIDTH, height=THUMB_HEIGHT,
+                           bg=BG_MID, fg="#888888",
+                           font=("Georgia", 10), wraplength=THUMB_WIDTH - 20)
+    image_panel.pack(pady=(0, 10))
+    image_panel.bind("<Button-1>", open_image_fullsize)
+
     button_row = tk.Frame(root, bg=BG_DARK)
-    button_row.pack(pady=(10, 0))
+    button_row.pack(pady=(4, 0))
 
     history_btn = make_btn(button_row, text="📊 View History",
                            command=view_history,
@@ -220,8 +302,8 @@ def run():
                            padx=15, pady=6)
     history_btn.pack(side="left", padx=5)
 
-    # Save button is created but not packed yet — it appears only after a
-    # scene is generated (see show_result).
+    # Save button is built but not packed; it appears only after a scene
+    # is generated (see show_result).
     save_btn = make_btn(button_row, text="💾 Save Scene",
                         command=save_current_scene,
                         bg="#2d6a4f", fg="white",
