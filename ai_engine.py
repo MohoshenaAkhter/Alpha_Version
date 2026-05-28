@@ -1,5 +1,6 @@
 # Calls the Groq API with the user's text and returns a dict containing
-# emotion, scene, camera_style, lighting and a list of 3 hex colors.
+# emotion, scene, camera_style, lighting, a list of 3 hex colors, and an
+# image_prompt suitable for feeding into an image-generation model.
 
 import json
 from groq import Groq
@@ -20,7 +21,10 @@ def get_emotion_and_scene(text):
         '- "scene": vivid 2-3 sentence cinematic scene\n'
         '- "camera_style": camera technique (e.g. slow tracking shot)\n'
         '- "lighting": lighting description (e.g. soft golden backlight)\n'
-        '- "colors": list of 3 hex colour codes\n\n'
+        '- "colors": list of 3 hex colour codes\n'
+        '- "image_prompt": one sentence visual description of the scene, '
+        'written for an image-generation model. Focus on subject, environment, '
+        'mood and visual style. Do not mention camera brands or photographer names.\n\n'
         "Respond with JSON only, no extra text."
     )
 

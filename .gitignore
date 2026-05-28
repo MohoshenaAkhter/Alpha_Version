@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
 scenes.csv
+scenes/
 .env
 venv/
