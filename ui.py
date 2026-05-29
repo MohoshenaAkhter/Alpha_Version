@@ -232,6 +232,9 @@ def run():
                         font=("Courier", 11), bg=BG_MID, fg="white",
                         insertbackground="white", relief="flat", padx=10, pady=8)
     input_box.pack(pady=4)
+    # Cmd/Ctrl+Enter submits without the user reaching for the mouse.
+    input_box.bind("<Command-Return>", lambda e: (generate_scene(), "break")[1])
+    input_box.bind("<Control-Return>", lambda e: (generate_scene(), "break")[1])
 
     generate_btn = make_btn(root, text="✨ Generate Scene",
                             command=generate_scene,

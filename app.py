@@ -11,11 +11,13 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
+    # Main page: form, result area, image, save and history buttons.
     return render_template("index.html")
 
 
 @app.route("/generate", methods=["POST"])
 def generate():
+    # Takes the user's text, returns the scene fields and a cached image URL.
     data = request.get_json() or {}
     user_input = data.get("text", "").strip()
     if not user_input:
@@ -46,6 +48,7 @@ def generate():
 
 @app.route("/save", methods=["POST"])
 def save():
+    # Appends one scene (including its image path) to scenes.csv.
     data = request.get_json() or {}
     result = {
         "emotion": data.get("emotion", ""),
@@ -60,6 +63,7 @@ def save():
 
 @app.route("/history")
 def history():
+    # Scrollable list of saved scenes + a base64 bar chart of emotions.
     entries = load_scenes().to_dict(orient="records")
     chart = get_emotion_chart_base64()
     return render_template("history.html", entries=entries, chart=chart)
@@ -67,6 +71,7 @@ def history():
 
 @app.route("/scenes/images/<filename>")
 def serve_image(filename):
+    # Serves a cached generated image so the browser can display it.
     return send_from_directory(
         os.path.join(os.getcwd(), "scenes", "images"), filename
     )

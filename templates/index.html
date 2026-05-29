@@ -15,6 +15,11 @@
 
         <button id="generate-btn" onclick="generateScene()">✨ Generate Scene</button>
 
+        <div id="loading" style="display:none;">
+            <div class="spinner"></div>
+            <p class="loading-text">Generating your cinematic scene…</p>
+        </div>
+
         <div id="output-section" style="display:none;">
             <div class="result-box">
                 <p><strong>🎭 Emotion:</strong> <span id="emotion"></span></p>
@@ -25,12 +30,12 @@
                 <div id="swatches" class="swatches"></div>
             </div>
 
-            <!-- Cinematic Image -->
             <div id="image-section" style="display:none; margin-top:15px;">
                 <div class="result-box">
-                    <p><strong>🖼️ Cinematic Image:</strong></p>
+                    <p><strong>🖼️ Cinematic Image:</strong> <span class="hint">(click to enlarge)</span></p>
                     <img id="scene-image" src="" alt="Cinematic Scene"
-                         style="width:100%; border-radius:8px; margin-top:8px;">
+                         onclick="openImageFullsize()"
+                         style="width:100%; border-radius:8px; margin-top:8px; cursor:zoom-in;">
                 </div>
             </div>
 
@@ -38,12 +43,22 @@
             <a href="/history"><button>📊 View History</button></a>
         </div>
 
+        <div id="status-msg" class="status"></div>
         <div id="error-msg" class="error"></div>
+    </div>
+
+    <div id="lightbox" class="lightbox" onclick="closeImageFullsize()">
+        <img id="lightbox-image" src="" alt="Scene Image">
     </div>
 
     <script>
         let lastResult = {};
         let lastInput = "";
+
+        function clearMessages() {
+            document.getElementById("error-msg").textContent = "";
+            document.getElementById("status-msg").textContent = "";
+        }
 
         async function generateScene() {
             const text = document.getElementById("user-input").value.trim();
@@ -52,9 +67,10 @@
             const btn = document.getElementById("generate-btn");
             btn.disabled = true;
             btn.textContent = "Generating...";
-            document.getElementById("error-msg").textContent = "";
+            clearMessages();
             document.getElementById("output-section").style.display = "none";
             document.getElementById("image-section").style.display = "none";
+            document.getElementById("loading").style.display = "block";
 
             try {
                 const res = await fetch("/generate", {
@@ -73,7 +89,6 @@
                 document.getElementById("camera").textContent = data.camera_style;
                 document.getElementById("lighting").textContent = data.lighting;
 
-                // Color swatches
                 const swatches = document.getElementById("swatches");
                 swatches.innerHTML = "";
                 data.colors.forEach(c => {
@@ -97,27 +112,52 @@
             } catch (err) {
                 document.getElementById("error-msg").textContent = "Error: " + err.message;
             } finally {
+                document.getElementById("loading").style.display = "none";
                 btn.disabled = false;
                 btn.textContent = "✨ Generate Scene";
             }
         }
 
         async function saveScene() {
-            await fetch("/save", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
-                    input: lastInput,
-                    emotion: lastResult.emotion,
-                    scene: lastResult.scene,
-                    camera_style: lastResult.camera_style,
-                    lighting: lastResult.lighting,
-                    colors: lastResult.colors,
-                    image_path: lastResult.image_path
-                })
-            });
-            alert("Scene saved!");
+            clearMessages();
+            try {
+                const res = await fetch("/save", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        input: lastInput,
+                        emotion: lastResult.emotion,
+                        scene: lastResult.scene,
+                        camera_style: lastResult.camera_style,
+                        lighting: lastResult.lighting,
+                        colors: lastResult.colors,
+                        image_path: lastResult.image_path
+                    })
+                });
+                if (!res.ok) throw new Error("Server returned " + res.status);
+                const data = await res.json();
+                if (data.status !== "saved") throw new Error("Unexpected response");
+                document.getElementById("status-msg").textContent = "✓ Scene saved!";
+            } catch (err) {
+                document.getElementById("error-msg").textContent =
+                    "Could not save scene: " + err.message;
+            }
         }
+
+        function openImageFullsize() {
+            const src = document.getElementById("scene-image").src;
+            if (!src) return;
+            document.getElementById("lightbox-image").src = src;
+            document.getElementById("lightbox").style.display = "flex";
+        }
+
+        function closeImageFullsize() {
+            document.getElementById("lightbox").style.display = "none";
+        }
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") closeImageFullsize();
+        });
     </script>
 </body>
 </html>
