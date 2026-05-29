@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>History</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Emotion History</h1>
+        <a href="/"><button>← Back</button></a>
+
+        <!-- Chart Section -->
+        {% if chart %}
+        <div class="chart-section">
+            <h2>📈 Emotion Chart</h2>
+            <img src="data:image/png;base64,{{ chart }}"
+                 alt="Emotion Chart"
+                 style="width:100%; max-width:700px; border-radius:8px; margin:15px 0;">
+        </div>
+        {% endif %}
+
+        <!-- History Entries -->
+        {% if entries %}
+            {% for entry in entries %}
+            <div class="result-box">
+                <p><strong>🕐 Time:</strong> {{ entry.timestamp }}</p>
+                <p><strong>💬 Input:</strong> {{ entry.user_input }}</p>
+                <p><strong>🎭 Emotion:</strong> {{ entry.emotion }}</p>
+                <p><strong>🎬 Scene:</strong> {{ entry.scene }}</p>
+                <p><strong>🎥 Camera:</strong> {{ entry.camera_style }}</p>
+                <p><strong>💡 Lighting:</strong> {{ entry.lighting }}</p>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p>No history yet. Generate some scenes first!</p>
+        {% endif %}
+
+    </div>
+</body>
+</html>

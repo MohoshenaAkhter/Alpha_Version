@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Cinematic Scene Engine</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 Cinematic Scene Engine</h1>
+        <p class="subtitle">Type how you feel — get a cinematic scene</p>
+
+        <label>How are you feeling?</label>
+        <textarea id="user-input" rows="4" placeholder="e.g. I feel lost and tired..."></textarea>
+
+        <button id="generate-btn" onclick="generateScene()">✨ Generate Scene</button>
+
+        <div id="loading" style="display:none;">
+            <div class="spinner"></div>
+            <p class="loading-text">Generating your cinematic scene…</p>
+        </div>
+
+        <div id="output-section" style="display:none;">
+            <div class="result-box">
+                <p><strong>🎭 Emotion:</strong> <span id="emotion"></span></p>
+                <p><strong>🎬 Scene:</strong> <span id="scene"></span></p>
+                <p><strong>🎥 Camera Style:</strong> <span id="camera"></span></p>
+                <p><strong>💡 Lighting:</strong> <span id="lighting"></span></p>
+                <p><strong>🎨 Colors:</strong></p>
+                <div id="swatches" class="swatches"></div>
+            </div>
+
+            <div id="image-section" style="display:none; margin-top:15px;">
+                <div class="result-box">
+                    <p><strong>🖼️ Cinematic Image:</strong> <span class="hint">(click to enlarge)</span></p>
+                    <img id="scene-image" src="" alt="Cinematic Scene"
+                         onclick="openImageFullsize()"
+                         style="width:100%; border-radius:8px; margin-top:8px; cursor:zoom-in;">
+                </div>
+            </div>
+
+            <button onclick="saveScene()">💾 Save Scene</button>
+            <a href="/history"><button>📊 View History</button></a>
+        </div>
+
+        <div id="status-msg" class="status"></div>
+        <div id="error-msg" class="error"></div>
+    </div>
+
+    <div id="lightbox" class="lightbox" onclick="closeImageFullsize()">
+        <img id="lightbox-image" src="" alt="Scene Image">
+    </div>
+
+    <script>
+        let lastResult = {};
+        let lastInput = "";
+
+        function clearMessages() {
+            document.getElementById("error-msg").textContent = "";
+            document.getElementById("status-msg").textContent = "";
+        }
+
+        async function generateScene() {
+            const text = document.getElementById("user-input").value.trim();
+            if (!text) { alert("Please type something first!"); return; }
+
+            const btn = document.getElementById("generate-btn");
+            btn.disabled = true;
+            btn.textContent = "Generating...";
+            clearMessages();
+            document.getElementById("output-section").style.display = "none";
+            document.getElementById("image-section").style.display = "none";
+            document.getElementById("loading").style.display = "block";
+
+            try {
+                const res = await fetch("/generate", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({text})
+                });
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+
+                lastResult = data;
+                lastInput = text;
+
+                document.getElementById("emotion").textContent = data.emotion;
+                document.getElementById("scene").textContent = data.scene;
+                document.getElementById("camera").textContent = data.camera_style;
+                document.getElementById("lighting").textContent = data.lighting;
+
+                const swatches = document.getElementById("swatches");
+                swatches.innerHTML = "";
+                data.colors.forEach(c => {
+                    const div = document.createElement("div");
+                    div.className = "swatch";
+                    div.style.backgroundColor = c;
+                    div.title = c;
+                    swatches.appendChild(div);
+                });
+
+                if (data.image_url) {
+                    document.getElementById("scene-image").src = data.image_url;
+                    document.getElementById("image-section").style.display = "block";
+                } else if (data.image_error) {
+                    document.getElementById("error-msg").textContent =
+                        "Image unavailable: " + data.image_error;
+                }
+
+                document.getElementById("output-section").style.display = "block";
+
+            } catch (err) {
+                document.getElementById("error-msg").textContent = "Error: " + err.message;
+            } finally {
+                document.getElementById("loading").style.display = "none";
+                btn.disabled = false;
+                btn.textContent = "✨ Generate Scene";
+            }
+        }
+
+        async function saveScene() {
+            clearMessages();
+            try {
+                const res = await fetch("/save", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        input: lastInput,
+                        emotion: lastResult.emotion,
+                        scene: lastResult.scene,
+                        camera_style: lastResult.camera_style,
+                        lighting: lastResult.lighting,
+                        colors: lastResult.colors,
+                        image_path: lastResult.image_path
+                    })
+                });
+                if (!res.ok) throw new Error("Server returned " + res.status);
+                const data = await res.json();
+                if (data.status !== "saved") throw new Error("Unexpected response");
+                document.getElementById("status-msg").textContent = "✓ Scene saved!";
+            } catch (err) {
+                document.getElementById("error-msg").textContent =
+                    "Could not save scene: " + err.message;
+            }
+        }
+
+        function openImageFullsize() {
+            const src = document.getElementById("scene-image").src;
+            if (!src) return;
+            document.getElementById("lightbox-image").src = src;
+            document.getElementById("lightbox").style.display = "flex";
+        }
+
+        function closeImageFullsize() {
+            document.getElementById("lightbox").style.display = "none";
+        }
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") closeImageFullsize();
+        });
+    </script>
+</body>
+</html>
