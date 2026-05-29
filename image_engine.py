@@ -1,18 +1,13 @@
-# Generates a cinematic image for the scene using Pollinations.ai.
-# Pollinations is free and needs no API key, and each result is cached on
-# disk by a hash of its prompt so the same prompt isn't refetched.
-
+import base64
 import hashlib
 import os
-import urllib.parse
 
 import requests
 
-POLLINATIONS_URL = "https://image.pollinations.ai/prompt/"
+CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN")
+MODEL = "@cf/black-forest-labs/flux-1-schnell"
 CACHE_DIR = os.path.join("scenes", "images")
-DEFAULT_WIDTH = 768
-DEFAULT_HEIGHT = 512
-DEFAULT_MODEL = "flux"
 REQUEST_TIMEOUT = 60
 
 
@@ -20,21 +15,12 @@ class ImageGenerationError(Exception):
     pass
 
 
-def _ensure_cache_dir():
-    os.makedirs(CACHE_DIR, exist_ok=True)
-
-
-def _cache_path(prompt, width, height, model):
-    # Same prompt at a different size really is a different image, so the
-    # cache key has to include the rendering parameters too.
-    key = f"{model}|{width}x{height}|{prompt}"
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+def _cache_path(prompt):
+    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
     return os.path.join(CACHE_DIR, f"{digest}.jpg")
 
 
 def build_image_prompt(scene_dict):
-    # Prefer the model-written image_prompt; fall back to stitching scene,
-    # camera and lighting if it isn't there.
     image_prompt = (scene_dict.get("image_prompt") or "").strip()
     if image_prompt:
         return f"{image_prompt} Cinematic, film still, high detail."
@@ -55,23 +41,33 @@ def build_image_prompt(scene_dict):
     return " ".join(parts)
 
 
-def generate_image(prompt, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, model=DEFAULT_MODEL):
+def generate_image(prompt):
     if not prompt or not prompt.strip():
         raise ImageGenerationError("Empty image prompt.")
 
-    _ensure_cache_dir()
-    path = _cache_path(prompt, width, height, model)
+    if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
+        raise ImageGenerationError(
+            "Cloudflare credentials are not set. Add CLOUDFLARE_ACCOUNT_ID "
+            "and CLOUDFLARE_API_TOKEN to your environment."
+        )
+
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = _cache_path(prompt)
     if os.path.exists(path) and os.path.getsize(path) > 0:
         return path
 
-    encoded = urllib.parse.quote(prompt, safe="")
     url = (
-        f"{POLLINATIONS_URL}{encoded}"
-        f"?width={width}&height={height}&model={model}&nologo=true"
+        f"https://api.cloudflare.com/client/v4/accounts/"
+        f"{CLOUDFLARE_ACCOUNT_ID}/ai/run/{MODEL}"
     )
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    body = {"prompt": prompt, "steps": 8}
 
     try:
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        response = requests.post(url, headers=headers, json=body, timeout=REQUEST_TIMEOUT)
     except requests.Timeout as exc:
         raise ImageGenerationError("Image generation timed out. Try again in a moment.") from exc
     except requests.ConnectionError as exc:
@@ -79,15 +75,28 @@ def generate_image(prompt, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, model=DEF
     except requests.RequestException as exc:
         raise ImageGenerationError(f"Image request failed: {exc}") from exc
 
+    if response.status_code == 401 or response.status_code == 403:
+        raise ImageGenerationError(
+            "Cloudflare authentication failed. Check CLOUDFLARE_API_TOKEN."
+        )
+    if response.status_code == 429:
+        raise ImageGenerationError("Daily Cloudflare AI quota reached. Try again tomorrow.")
     if response.status_code != 200:
         raise ImageGenerationError(
-            f"Image service returned status {response.status_code}."
+            f"Image service returned status {response.status_code}: {response.text[:200]}"
         )
 
-    # Pollinations occasionally returns an empty body under load.
-    if not response.content or len(response.content) < 1024:
-        raise ImageGenerationError("Image service returned an empty or invalid image.")
+    payload = response.json()
+    if not payload.get("success"):
+        errors = payload.get("errors") or []
+        msg = errors[0].get("message") if errors else "Unknown error."
+        raise ImageGenerationError(f"Cloudflare AI error: {msg}")
 
+    image_b64 = payload.get("result", {}).get("image")
+    if not image_b64:
+        raise ImageGenerationError("Cloudflare AI returned no image.")
+
+    image_bytes = base64.b64decode(image_b64)
     with open(path, "wb") as f:
-        f.write(response.content)
+        f.write(image_bytes)
     return path

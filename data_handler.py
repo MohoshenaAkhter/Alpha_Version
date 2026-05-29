@@ -29,7 +29,7 @@ def save_scene(user_input, result, image_path=None):
         "image_path": image_path or "",
     }
 
-    # Migrate older CSVs (alpha) that don't have the image_path column yet.
+    # Migrate alpha CSVs that don't have the image_path column yet.
     if os.path.exists(DATA_FILE):
         existing = pd.read_csv(DATA_FILE)
         if "image_path" not in existing.columns:
